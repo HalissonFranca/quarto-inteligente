@@ -1,0 +1,14 @@
+# Firmware (PlatformIO)
+firmware/.pio/
+firmware/.vscode/
+firmware/include/secrets.h
+
+# API (Spring Boot / Maven)
+api/target/
+api/.mvn/wrapper/maven-wrapper.jar
+api/.vscode/
+api/.idea/
+api/*.iml
+
+# Geral
+.DS_Store
