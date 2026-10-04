@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Monitoramento Ambiental</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --temp: #fb923c;
+            --hum: #38bdf8;
+            --ok: #4ade80;
+            --err: #f87171;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+        }
+
+        body {
+            font-family: system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 24px;
+        }
+
+        .wrap {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 1.4rem;
+        }
+
+        .status {
+            font-size: .85rem;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--err);
+        }
+
+        .dot.on {
+            background: var(--ok);
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 20px;
+        }
+
+        .label {
+            color: var(--muted);
+            font-size: .85rem;
+        }
+
+        .value {
+            font-size: 3rem;
+            font-weight: 700;
+            margin: 4px 0;
+        }
+
+        .temp .value {
+            color: var(--temp);
+        }
+
+        .hum .value {
+            color: var(--hum);
+        }
+
+        .sub {
+            font-size: .8rem;
+            color: var(--muted);
+        }
+
+        .chart-card {
+            height: 340px;
+        }
+
+        .chart-card canvas {
+            max-height: 290px;
+        }
+
+        .demo {
+            background: #854d0e;
+            color: #fef3c7;
+            font-size: .8rem;
+            padding: 6px 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <header>
+            <h1>🌡️ Monitoramento Ambiental</h1>
+            <div class="status"><span class="dot" id="dot"></span><span id="status">Conectando...</span></div>
+        </header>
+
+        <div class="demo" id="demo">Modo demonstração: não consegui acessar a API, exibindo dados fictícios.</div>
+
+        <section class="cards">
+            <div class="card temp">
+                <div class="label">Temperatura</div>
+                <div class="value"><span id="temp">--</span>°C</div>
+                <div class="sub" id="tempSub">máx / mín: --</div>
+            </div>
+            <div class="card hum">
+                <div class="label">Umidade</div>
+                <div class="value"><span id="hum">--</span>%</div>
+                <div class="sub" id="humSub">máx / mín: --</div>
+            </div>
+        </section>
+
+        <section class="card chart-card">
+            <canvas id="chart"></canvas>
+        </section>
+    </div>
+
+    <script>
+        // ====== CONFIGURAÇÃO ======
+        // Ajuste para o endpoint real da sua API (se servir este HTML pelo Spring Boot, use caminho relativo)
+        const API_URL = 'https://quarto-inteligente.onrender.com/api/leituras';
+        const INTERVALO_MS = 30000;  // atualização automática (a ESP32 envia a cada ~5 min)
+        const MAX_PONTOS = 60;       // quantos pontos mostrar no gráfico
+        const LEITURA_ANTIGA_MIN = 15; // avisa se a última leitura for mais velha que isso
+
+        // Modo demo só com ?demo na URL (ex.: index.html?demo)
+        const modoDemo = new URLSearchParams(location.search).has('demo');
+        let demoDados = [];
+
+        // ====== GRÁFICO ======
+        const chart = new Chart(document.getElementById('chart'), {
+            type: 'line',
+            data: {
+                labels: [], datasets: [
+                    { label: 'Temperatura (°C)', data: [], borderColor: '#fb923c', backgroundColor: '#fb923c33', tension: .35, yAxisID: 'yT', fill: true, pointRadius: 2 },
+                    { label: 'Umidade (%)', data: [], borderColor: '#38bdf8', backgroundColor: '#38bdf833', tension: .35, yAxisID: 'yH', fill: true, pointRadius: 2 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#e2e8f0' } } },
+                scales: {
+                    x: { ticks: { color: '#94a3b8', maxTicksLimit: 8 }, grid: { color: '#33415555' } },
+                    yT: { position: 'left', ticks: { color: '#fb923c' }, grid: { color: '#33415555' } },
+                    yH: { position: 'right', ticks: { color: '#38bdf8' }, grid: { drawOnChartArea: false } }
+                }
+            }
+        });
+
+        // ====== DADOS ======
+        function gerarDemo() {
+            const agora = Date.now();
+            demoDados = Array.from({ length: MAX_PONTOS }, (_, i) => ({
+                id: i + 1,
+                dataHora: new Date(agora - (MAX_PONTOS - i) * INTERVALO_MS).toISOString(),
+                temperatura: +(26 + Math.sin(i / 6) * 2 + Math.random() * .4).toFixed(1),
+                umidade: +(68 + Math.cos(i / 8) * 5 + Math.random() * .6).toFixed(1)
+            }));
+        }
+
+        function proximoDemo() {
+            const ult = demoDados[demoDados.length - 1];
+            demoDados.push({
+                id: ult.id + 1,
+                dataHora: new Date().toISOString(),
+                temperatura: +(ult.temperatura + (Math.random() - .5) * .6).toFixed(1),
+                umidade: +(ult.umidade + (Math.random() - .5) * 1.2).toFixed(1)
+            });
+            demoDados = demoDados.slice(-MAX_PONTOS);
+            return demoDados;
+        }
+
+        async function buscarLeituras() {
+            if (modoDemo) {
+                if (!demoDados.length) { gerarDemo(); document.getElementById('demo').style.display = 'block'; }
+                return proximoDemo();
+            }
+            // Render gratuito pode levar ~1 min para "acordar": timeout generoso
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 70000);
+            try {
+                const r = await fetch(API_URL, { signal: ctrl.signal });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const json = await r.json();
+                return Array.isArray(json) ? json : [json];   // aceita lista ou objeto único
+            } finally {
+                clearTimeout(t);
+            }
+        }
+
+        // ====== ATUALIZA TELA ======
+        const hora = iso => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const faixa = (arr, k) => `máx ${Math.max(...arr.map(x => x[k])).toFixed(1)} / mín ${Math.min(...arr.map(x => x[k])).toFixed(1)}`;
+
+        // Acumula leituras quando a API devolve só a última (objeto único)
+        let historico = [];
+
+        async function atualizar() {
+            const dot = document.getElementById('dot'), st = document.getElementById('status');
+            try {
+                const novas = await buscarLeituras();
+                novas.forEach(l => { if (!historico.some(h => h.id === l.id)) historico.push(l); });
+                historico.sort((a, b) => new Date(a.dataHora) - new Date(b.dataHora));
+                historico = historico.slice(-MAX_PONTOS);
+
+                const ult = historico[historico.length - 1];
+                document.getElementById('temp').textContent = ult.temperatura.toFixed(1);
+                document.getElementById('hum').textContent = ult.umidade.toFixed(1);
+                document.getElementById('tempSub').textContent = faixa(historico, 'temperatura');
+                document.getElementById('humSub').textContent = faixa(historico, 'umidade');
+
+                chart.data.labels = historico.map(l => hora(l.dataHora));
+                chart.data.datasets[0].data = historico.map(l => l.temperatura);
+                chart.data.datasets[1].data = historico.map(l => l.umidade);
+                chart.update();
+
+                const idadeMin = (Date.now() - new Date(ult.dataHora)) / 60000;
+                const antiga = !modoDemo && idadeMin > LEITURA_ANTIGA_MIN;
+                dot.classList.toggle('on', !antiga);
+                st.textContent = antiga
+                    ? `Sem leituras novas há ${Math.round(idadeMin)} min (última às ${hora(ult.dataHora)})`
+                    : 'Última leitura às ' + hora(ult.dataHora);
+            } catch (e) {
+                dot.classList.remove('on');
+                st.textContent = 'Sem resposta da API, tentando de novo...';
+                console.error(e);
+            }
+        }
+
+        async function loop() {
+            await atualizar();
+            setTimeout(loop, INTERVALO_MS);
+        }
+        document.getElementById('status').textContent = 'Conectando (o servidor pode demorar ~1 min para acordar)...';
+        loop();
+    </script>
+</body>
+
+</html>
