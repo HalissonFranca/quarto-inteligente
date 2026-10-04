@@ -226,7 +226,9 @@
         }
 
         // ====== ATUALIZA TELA ======
-        const hora = iso => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        // A API manda dataHora sem fuso (servidor do Render roda em UTC): trata como UTC
+        const paraData = iso => new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z');
+        const hora = iso => paraData(iso).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const faixa = (arr, k) => `máx ${Math.max(...arr.map(x => x[k])).toFixed(1)} / mín ${Math.min(...arr.map(x => x[k])).toFixed(1)}`;
 
         // Acumula leituras quando a API devolve só a última (objeto único)
@@ -237,7 +239,7 @@
             try {
                 const novas = await buscarLeituras();
                 novas.forEach(l => { if (!historico.some(h => h.id === l.id)) historico.push(l); });
-                historico.sort((a, b) => new Date(a.dataHora) - new Date(b.dataHora));
+                historico.sort((a, b) => paraData(a.dataHora) - paraData(b.dataHora));
                 historico = historico.slice(-MAX_PONTOS);
 
                 const ult = historico[historico.length - 1];
@@ -251,7 +253,7 @@
                 chart.data.datasets[1].data = historico.map(l => l.umidade);
                 chart.update();
 
-                const idadeMin = (Date.now() - new Date(ult.dataHora)) / 60000;
+                const idadeMin = (Date.now() - paraData(ult.dataHora)) / 60000;
                 const antiga = !modoDemo && idadeMin > LEITURA_ANTIGA_MIN;
                 dot.classList.toggle('on', !antiga);
                 st.textContent = antiga
