@@ -1,10 +1,12 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
 #include "secrets.h" // copie de secrets.example.h e preencha os dados
+#include "certs.h"   // certificado raiz para validar a conexão TLS
 
 // ---------- Configurações do sensor ----------
 #define DHTPIN 4 // pino digital onde o DHT22 está ligado
@@ -15,10 +17,7 @@ DHT dht(DHTPIN, DHTTYPE);
 const unsigned long INTERVALO_MS = 30000; // 30 segundos
 unsigned long ultimoEnvio = 0;
 
-// ---------- Objetos do MQTT ----------
-// O WiFiClient cuida da conexão de rede "crua" (TCP).
-// O PubSubClient usa esse WiFiClient por baixo dos panos para falar o protocolo MQTT.
-WiFiClient espClient;
+WiFiClientSecure espClient;
 PubSubClient mqttClient(espClient);
 
 void conectarWiFi()
@@ -91,6 +90,10 @@ void setup()
 
     dht.begin();
     conectarWiFi();
+
+    // Diz ao cliente TLS em qual certificado raiz confiar.
+    // Precisa ser feito ANTES de tentar conectar no broker.
+    espClient.setCACert(ROOT_CA_CERT);
 
     // Diz ao PubSubClient qual broker usar (endereço + porta)
     mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
